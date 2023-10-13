@@ -1,0 +1,253 @@
+#include <AccelStepper.h> 
+
+// Define step and direction pins for Tension Motor 
+#define motor1StepPin 2
+#define motor1DirPin 3
+
+// Define step and direction pins for Feed Motor
+#define motor2StepPin 4
+#define motor2DirPin 5
+
+// Set to 1 to enable serial print
+#define DEBUG 0 
+
+// Create instances of AccelStepper for Motor 1 and Motor 2
+AccelStepper motor1(AccelStepper::DRIVER, motor1StepPin, motor1DirPin);
+AccelStepper motor2(AccelStepper::DRIVER, motor2StepPin, motor2DirPin);
+
+//The motor speeds
+const float _10mmps = (10.0/34.6)*6400.0; // 10 mm per second draw speed
+const float _10mmpsFEED = (10.0/34.6/32.45)*25000; // 5 mm per second draw speed
+float motor1Speed = _10mmps; //First number is speed in mm/s, third number is steps per revolution
+float motor2Speed = _10mmpsFEED; //First number is in mm/s, lastnumber is steps per revolution
+
+float factorofchange = 10;
+float factorofsmallchange =  factorofchange * 0.1;
+
+//User interface pins
+int greenLED = 11;
+int redLED = 12;
+int input_button = 13;
+
+//Pins for the hall sensor
+int hall_sensor_analog = A0;
+int sensor_value = 0;
+int hallTest = 0;
+
+//Power source pins
+int hcPower = 7;
+int fPower = 8;
+int tPower = 9;
+
+//Limit switch pin
+int limSwitch = 10;
+
+//Working variables
+int calibrate_1_70;
+int calibrate_1_75;
+int calibrate_1_80;
+int buttonState = 0;
+int limSwitchState = 0;
+int diamrun = 400;
+
+// Current time in ms 
+int whenAreWe;
+// The time delta until we check the diameter
+int stopTime;
+
+// The time in ms from start to first diameter check
+const int startup_time_ms = 20000;
+// The time in ms between diameter checks
+const int diam_check_time_ms = 1000;
+
+inline void setMotorSpeed(AccelStepper& motor, float speed) {
+  // Convert speed from steps per second to steps per second squared
+  motor.setSpeed(speed);
+}
+
+void blinkLED(int LED) {
+  digitalWrite(LED, HIGH);
+  delay(1000);
+  digitalWrite(LED, LOW);
+  delay(1000);
+}
+
+// Returns 0 on fail, returns 1 on success
+int calibrate_datum() {
+  //Small datum piece recording
+  Serial.println("Insert small datum piece");
+  blinkLED(greenLED);
+  buttonState = digitalRead(input_button);
+  while (buttonState == 0){
+    buttonState = digitalRead(input_button);
+    delay(10);
+  }
+  calibrate_1_70 = analogRead(hall_sensor_analog);
+  Serial.println("Calibrated 1.70");
+  Serial.println(calibrate_1_70);
+  buttonState = 0;
+  delay(5000);
+
+  //Large datum piece recording
+  Serial.println("Insert large datum piece");
+  blinkLED(greenLED);
+  buttonState = digitalRead(input_button);
+  while (buttonState == 0){
+    buttonState = digitalRead(input_button);
+    delay(10);
+  }
+  calibrate_1_80 = analogRead(hall_sensor_analog);
+  Serial.println("Calibrated 1.80");
+  Serial.println(calibrate_1_80);
+  buttonState = 0;
+  delay(5000);
+
+  //Calibration check
+  Serial.println("Insert ideal datum piece");
+  blinkLED(greenLED);
+  buttonState = digitalRead(input_button);
+  while (buttonState == 0){
+    buttonState = digitalRead(input_button);
+    delay(10);
+  }
+  calibrate_1_75 = analogRead(hall_sensor_analog);
+  Serial.println("Calibrated ideal");
+  Serial.println(calibrate_1_75);
+  buttonState = 0;
+  delay(5000);
+  int caltest = (calibrate_1_70 + calibrate_1_80)/2; //This is the average of the two datum pieces
+  int caldev = abs(caltest - calibrate_1_75); //This is the difference between the average and the ideal datum piece
+  if (caldev > 15) { //Need to run tests to verify this tolerance value
+    Serial.println("Calibration failed, Start over");
+    blinkLED(redLED);
+    return 0;
+  } else {
+    Serial.println("Calibration successful");
+    blinkLED(greenLED);
+    blinkLED(greenLED);
+    blinkLED(greenLED);
+    return 1;
+  }
+}
+
+//Measurement feedback loop
+void check_diam() {
+  diamrun = analogRead(hall_sensor_analog);
+  if (diamrun < 220) { //No filament, shut down
+    digitalWrite(hcPower, LOW); //Turn off the heater
+    delay(5000);
+    digitalWrite(tPower, LOW); //Turn off the motors
+    digitalWrite(fPower, LOW); //Turn off the motors
+    // Exit the loop
+    exit(0); // Ends Program
+  } else if (diamrun < calibrate_1_70) { //Filament too thin, slow down motor
+    // Calculate the increment based on the delta
+    // e.x. 
+    motor1Speed = motor1Speed + (diamrun - calibrate_1_70)*factorofchange;
+    setMotorSpeed(motor1, motor1Speed);  
+  } else if (diamrun > calibrate_1_80){ //Speed up motor
+    motor1Speed = motor1Speed + (diamrun - calibrate_1_80)*factorofchange;
+    setMotorSpeed(motor1, motor1Speed); 
+  } else { // Have a minor adjustment based on if we are a little thick / little thin
+    motor1Speed = motor1Speed + (diamrun - calibrate_1_75)*factorofsmallchange;
+    setMotorSpeed(motor1, motor1Speed); 
+  }
+
+}
+
+void init_state() {
+
+  digitalWrite(greenLED, LOW); //Green LED
+  digitalWrite(redLED, HIGH); //Red LED
+  digitalWrite(tPower, LOW); // Tension motor power
+  digitalWrite(hcPower, LOW); //Turn off the heater
+  digitalWrite(fPower, LOW); //Turn off the motors
+  Serial.println("Press the user button to begin");
+  // Wait until button is pressed
+  while (buttonState == 0){
+    buttonState = digitalRead(input_button);
+    delay(10);
+  }
+  digitalWrite(redLED, LOW); //Red LED
+  blinkLED(greenLED);
+}
+
+void setup() {
+  // Set pin types
+  pinMode(greenLED, OUTPUT); //Green LED
+  pinMode(redLED, OUTPUT); //Red LED
+  pinMode(input_button, INPUT); // User input button
+  pinMode(limSwitch, INPUT); // Limit switch
+  pinMode(tPower, OUTPUT); // Tension motor power
+  pinMode(hcPower, OUTPUT); // Tension motor power
+  pinMode(fPower, OUTPUT); // Tension motor power
+
+  Serial.begin(9600);
+
+  // Add wait state that defines everything as off
+  init_state();
+
+  // Runs calibrate datum until success
+  while (!calibrate_datum()) {}
+
+  //Startup sequence
+/*/
+  digitalWrite(fmotorDirPin, HIGH);
+  while (limSwitchState == 0) {
+    limSwitchState = digitalRead(limSwitch);
+    delay(10);
+    fmotor.runSpeed();
+  }
+  digitalWrite(fmotorDirPin, LOW);
+  
+  digitalWrite(hcPower, HIGH);
+  digitalWrite(motorPower, HIGH);
+  Serial.println("Press the button to start automation");
+  while (buttonState == 0){
+    buttonState = digitalRead(input_button);
+    delay(10);
+    tmotor.runSpeed();
+    fmotor.runSpeed();
+  }
+/*/
+  digitalWrite(tPower, HIGH);
+  digitalWrite(fPower, HIGH);
+  digitalWrite(hcPower, HIGH);
+  // Set maximum speed and acceleration for Motor 1
+  motor1.setMaxSpeed(20000.0);
+  motor1.setAcceleration(10000.0);
+
+  // Set maximum speed and acceleration for Motor 2
+  motor2.setMaxSpeed(1500.0);
+  motor2.setAcceleration(800.0);
+
+  // Set initial speeds for both motors
+  setMotorSpeed(motor1, motor1Speed);  // Set initial speed for Motor 1 to 1000 steps per second
+  setMotorSpeed(motor2, motor2Speed);   // Set initial speed for Motor 2 to 800 steps per second
+
+  // TODO: Add button 
+
+  // I am entering the loop with motors running
+  // Takes your current time in milliseconds
+  int whenAreWe = millis(); 
+  // Stop time is 20 seconds from now 
+  int stopTime = whenAreWe + startup_time_ms; 
+
+  //Serial.begin(9600);
+}
+
+void loop() {
+  whenAreWe = millis();
+  if (whenAreWe > stopTime) { // For the next second, run the motors
+    check_diam();
+    #if DEBUG 
+    serialPrint(motor1Speed);
+    #endif
+    stopTime = whenAreWe + diam_check_time_ms; // Stop time is one second from now
+  }
+  motor1.runSpeed();
+  motor2.runSpeed(); 
+
+}
+
+
