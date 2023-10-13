@@ -1,12 +1,12 @@
 #include <AccelStepper.h> 
 
 // Define step and direction pins for Tension Motor 
-#define motor1StepPin 2
-#define motor1DirPin 3
+const int motor1StepPin = 2;
+const int motor1DirPin = 3;
 
 // Define step and direction pins for Feed Motor
-#define motor2StepPin 4
-#define motor2DirPin 5
+const int motor2StepPin = 4;
+const int motor2DirPin = 5;
 
 // Set to 1 to enable serial print
 #define DEBUG 0 
@@ -25,22 +25,20 @@ float factorofchange = 10;
 float factorofsmallchange =  factorofchange * 0.1;
 
 //User interface pins
-int greenLED = 11;
-int redLED = 12;
-int input_button = 13;
+const int greenLED = 11;
+const int redLED = 12;
+const int input_button = 13;
 
 //Pins for the hall sensor
-int hall_sensor_analog = A0;
-int sensor_value = 0;
-int hallTest = 0;
+const int hall_sensor_analog = A0;
 
 //Power source pins
-int hcPower = 7;
-int fPower = 8;
-int tPower = 9;
+const int hcPower = 7;
+const int fPower = 8;
+const int tPower = 9;
 
 //Limit switch pin
-int limSwitch = 10;
+const int limSwitch = 10;
 
 //Working variables
 int calibrate_1_70;
